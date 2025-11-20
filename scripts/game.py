@@ -22,7 +22,7 @@ class Game:
         self.moves = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
         self.agent_paths = [None]*nb_agents
         self.load_map(map_id)
-        self.gui = GUI(self)
+        self.gui = GUI(self,cell_size=20)
         
 
     
