@@ -191,7 +191,112 @@ def search_key_and_box(agent):
                 # if get_data(agent)["cell_val"] == np.float64(1.0):
                 #     found_element_add(agent, agent.x, agent.y,key)
                 #     return
-    
+        
+def search_key_and_box2(agent):
+    """ Function that makes the agent search for its key and box in the environment """
+    prev_cell_val = get_data(agent)["cell_val"]
+    if prev_cell_val not in [0.25, 0.3]:
+        return
+
+    best = prev_cell_val
+    directions = []
+    if prev_cell_val == np.float64(0.25):
+        key = KEY_TYPE
+    elif prev_cell_val == np.float64(0.3):
+        key = BOX_TYPE
+
+# TODO : Réparer cette boucle while (Regarder si toutes les directions sont bien testées (fonctionne si le robot vient d'en haut ou du bas mais pas sur les côtés))
+
+    while True:
+        
+        # Bouge Bas Droite
+        move(agent, DOWN_RIGHT)
+        data = get_data(agent)["cell_val"]
+        if data > best:
+            best = data
+            directions = [DOWN, RIGHT]
+            
+        else:
+            move(agent, UP_LEFT)  # Retourne à la position initiale
+
+            # Bouge Bas Gauche
+            move(agent, UP_LEFT)
+            data = get_data(agent)["cell_val"]
+            if data > best:
+                best = data
+                directions = [UP, LEFT]
+            else:
+                move(agent, DOWN_RIGHT)  # Retourne à la position initiale
+
+        
+        # Bouge Haut Gauche
+        move(agent, DOWN_LEFT)
+        data = get_data(agent)["cell_val"]
+        if data > best and LEFT in directions:
+            best = data
+            direction = LEFT
+            break
+        elif data > best and DOWN in directions:
+            best = data
+            direction = DOWN
+            break
+        else:
+            move(agent, UP_RIGHT)  # Retourne à la position initiale
+
+        # Bouge Haut Droite
+        move(agent, UP_RIGHT)
+        data = get_data(agent)["cell_val"]
+        if data == best:
+            direction = DOWN  # Par défaut si rien de mieux n'est trouvé
+            break
+        if data > best and RIGHT in directions:
+            best = data
+            direction = RIGHT
+            break
+        elif data > best and UP in directions:
+            best = data
+            direction = UP
+            break
+        else:
+            direction = UP  # Par défaut si rien de mieux n'est trouvé
+            break
+
+
+    time.sleep(3)
+    if direction == DOWN:
+
+        move(agent, DOWN_LEFT)
+        data = get_data(agent)["cell_val"]
+
+        if data > best:
+            found_element_add(agent, agent.x, agent.y,key)
+        elif data < best:
+            move(agent, RIGHT)
+            move(agent, RIGHT)
+            if get_data(agent)["cell_val"] == np.float64(1.0):
+                found_element_add(agent, agent.x, agent.y,key)
+        elif data == best:
+            move(agent, RIGHT)
+            if get_data(agent)["cell_val"] == np.float64(1.0):
+                found_element_add(agent, agent.x, agent.y,key)
+
+    elif direction == UP:
+
+        move(agent, UP_LEFT)
+        data = get_data(agent)["cell_val"]
+
+        if data > best:
+            found_element_add(agent, agent.x, agent.y,key)
+        elif data < best:
+            move(agent, RIGHT)
+            move(agent, RIGHT)
+            if get_data(agent)["cell_val"] == np.float64(1.0):
+                found_element_add(agent, agent.x, agent.y,key)
+        elif data == best:
+            move(agent, RIGHT)
+            if get_data(agent)["cell_val"] == np.float64(1.0):
+                found_element_add(agent, agent.x, agent.y,key)
+
 def found_element_add(agent,x, y,key):
     """ Function that adds the squares found to the list of found elements if not already present """   
     data = {"coordinates":None,"type": key}
