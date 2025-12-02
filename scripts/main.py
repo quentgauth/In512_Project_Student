@@ -23,17 +23,6 @@ def get_data(agent):
     data = agent.msg
     return data
 
-def diagonal_move(agent, target_x, target_y):
-    while agent.x != target_x and agent.y != target_y:
-        if agent.x < target_x and agent.y < target_y:
-            move(agent, DOWN_RIGHT)
-        elif agent.x < target_x and agent.y > target_y:
-            move(agent, UP_RIGHT)
-        elif agent.x > target_x and agent.y < target_y:
-            move(agent, DOWN_LEFT)
-        elif agent.x > target_x and agent.y > target_y:
-            move(agent, UP_LEFT)
-
 def move_to(agent, x, y, find_objects=True):
     """ Function that makes the agent move to the specified (x, y) position """
     
@@ -130,6 +119,7 @@ def search_map(agent):
         # move_to(agent1, 0,18)
 
         # move_to(agent1, 18,0)
+
 def search_key_and_box(agent):
     """ Function that makes the agent search for its key and box in the environment """
 
@@ -170,28 +160,42 @@ def search_key_and_box(agent):
 
             # Retourne à la position initiale
             if direction == "UP":
-                move(agent, DOWN)
-            elif direction == "DOWN":
                 move(agent, UP)
+            elif direction == "DOWN":
+                move(agent, DOWN)
             elif direction == "LEFT":
-                move(agent, RIGHT)
-            elif direction == "RIGHT":
                 move(agent, LEFT)
+            elif direction == "RIGHT":
+                move(agent, RIGHT)
             
         # Trouve la meilleure direction
-        best_direction, best_value = max(directions_values, key=lambda x: x[1])
-        if best_value > best:
-            best = best_value
-            direction = best_direction
-            break
-        else:
-            break  # Sort de la boucle si aucune amélioration n'est trouvée
-            
+        for i in range(len(directions_values)):
+            time.sleep(4)
 
-                # if get_data(agent)["cell_val"] == np.float64(1.0):
-                #     found_element_add(agent, agent.x, agent.y,key)
-                #     return
-    
+            if directions_values[i][1] > best:
+                best = directions_values[i][1]
+                best_direction = directions_values[i][0]
+                # Se déplace dans la meilleure direction
+                move(agent, best_direction)
+                if best == np.float64(1.0):
+                    found_element_add(agent, agent.x, agent.y, key)
+                    return
+                break
+            else:
+                if directions_values[i][1] == np.float64(0.0):
+                    if directions_values[i][0] == "UP":
+                        move(agent, DOWN)
+                        move(agent, DOWN)
+                    elif directions_values[i][0] == "DOWN":
+                        move(agent, UP)
+                        move(agent, UP)
+                    elif directions_values[i][0] == "LEFT":
+                        move(agent, RIGHT)
+                        move(agent, RIGHT)
+                    elif directions_values[i][0] == "RIGHT":
+                        move(agent, LEFT)
+                        move(agent, LEFT)
+        
 def found_element_add(agent,x, y,key):
     """ Function that adds the squares found to the list of found elements if not already present """   
     data = {"coordinates":None,"type": key}
@@ -211,7 +215,7 @@ if __name__ == "__main__":
     agent1 = Agent(ip_server)
     agent2 = Agent(ip_server)
     
-    w, h = agent1.w, agent1.h
+    W,H = agent1.w, agent1.h
 
     # Map Discovery Loop
 
