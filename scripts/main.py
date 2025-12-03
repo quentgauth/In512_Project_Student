@@ -120,81 +120,119 @@ def search_map(agent):
 
         # move_to(agent1, 18,0)
 
+def reverse_move(agent, direction):
+    """ Exécute le mouvement inverse pour revenir au point de départ immédiatement après un test. """
+    if direction == UP:
+        move(agent, DOWN)
+    elif direction == DOWN:
+        move(agent, UP)
+    elif direction == LEFT:
+        move(agent, RIGHT)
+    elif direction == RIGHT:
+        move(agent, LEFT)
+
 def search_key_and_box(agent):
-    """ Function that makes the agent search for its key and box in the environment """
-
-    # Cell value before searching
-    prev_cell_val = get_data(agent)["cell_val"]
-    if prev_cell_val not in [0.25, 0.3]:
-        return
+    """
+    Version corrigée respectant STRICTEMENT la logique :
+    - Boucle 2 fois (suffisant pour passer de 0.25 -> 0.5 -> 1.0)
+    - Scan des 4 voisins
+    - Si plusieurs max, on fait TOUS les mouvements (diagonale implicite)
+    """
     
-    allowed_moves = {
-        0: "STAND",
-        1: "LEFT",
-        2: "RIGHT",
-        3: "UP",
-        4: "DOWN",
-        5: "UP_LEFT",
-        6: "UP_RIGHT",
-        7: "DOWN_LEFT",
-        8: "DOWN_RIGHT"
-    }
-    move_name = allowed_moves.get(last_move, "UNKNOWN_MOVE")
+    # Dictionnaire pour revenir en arrière instantanément sans recalculer de pathfinding
+    opposites = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
 
-    last_directions = move_name.split('_')    
-
-    best = prev_cell_val
-
-    # Determine le type d'élément recherché
-    if prev_cell_val == np.float64(0.25):
-        key = KEY_TYPE
-    elif prev_cell_val == np.float64(0.3):
-        key = BOX_TYPE
-
-    directions_values = []
-    while True:
-        for direction in last_directions:
+    for i in range(2): 
+        # --- PHASE 1 : SCAN ---
+        dict_moves = {}
+        
+        # On teste les 4 directions
+        for direction in [UP, DOWN, LEFT, RIGHT]:
+            # 1. On avance pour tester
             move(agent, direction)
-            data = get_data(agent)["cell_val"]
-            directions_values.append((direction, data))
-
-            # Retourne à la position initiale
-            if direction == "UP":
-                move(agent, UP)
-            elif direction == "DOWN":
-                move(agent, DOWN)
-            elif direction == "LEFT":
-                move(agent, LEFT)
-            elif direction == "RIGHT":
-                move(agent, RIGHT)
             
-        # Trouve la meilleure direction
-        for i in range(len(directions_values)):
-            time.sleep(4)
+            # 2. On note la valeur
+            # On utilise .get() pour éviter un crash si la clé manque
+            val = agent.msg.get("cell_val", 0.0)
+            dict_moves[direction] = val
+            
+            # 3. On revient TOUT DE SUITE à la case départ du tour
+            # Ne surtout pas utiliser move_to() ici, c'est trop lent/complexe
+            move(agent, opposites[direction])
 
-            if directions_values[i][1] > best:
-                best = directions_values[i][1]
-                best_direction = directions_values[i][0]
-                # Se déplace dans la meilleure direction
-                move(agent, best_direction)
-                if best == np.float64(1.0):
-                    found_element_add(agent, agent.x, agent.y, key)
-                    return
-                break
-            else:
-                if directions_values[i][1] == np.float64(0.0):
-                    if directions_values[i][0] == "UP":
-                        move(agent, DOWN)
-                        move(agent, DOWN)
-                    elif directions_values[i][0] == "DOWN":
-                        move(agent, UP)
-                        move(agent, UP)
-                    elif directions_values[i][0] == "LEFT":
-                        move(agent, RIGHT)
-                        move(agent, RIGHT)
-                    elif directions_values[i][0] == "RIGHT":
-                        move(agent, LEFT)
-                        move(agent, LEFT)
+        # --- PHASE 2 : ANALYSE ---
+        max_value = max(dict_moves.values())
+        
+        # Si on a perdu la trace (que des 0), on arrête
+        if max_value == 0.0:
+            break
+
+        # On récupère TOUTES les directions qui ont la valeur max
+        best_moves = [
+            key
+            for key, value in dict_moves.items() # Parcourir chaque paire clé-valeur
+            if value == max_value                # Conserver uniquement si la valeur est le maximum
+        ]# revient a etre une liste avec les direction a prendre
+        for move_direction in best_moves:
+            move(agent, move_direction)
+    #check id key or box found
+    cell_value = agent.msg["cell_val"]
+    if cell_value == KEY_TYPE:
+        found_element_add(agent, agent.x, agent.y, KEY_TYPE)
+    elif cell_value == BOX_TYPE:
+        found_element_add(agent, agent.x, agent.y, BOX_TYPE)   
+def search_key_and_box2(agent):
+    """ Function that makes the agent search for its key and box in the environment """
+    """
+    idée de comment faire :
+    si le robot détecte une case avec une valeur de 0.25, alors il va essayer les case 
+    haut bas gauche droite en envoyant un msg[cell_value] pour chaque case
+    il crée un dictionnaire avec up, down, left, right et la valeur de chaque case
+    ensuite il regarde dans ce dictionnaire et recherche la valeur la plus élevée, 
+    si la valeur max est unique alors on va dans cette direction, si on voit qu'il y a plusieurs valeurs max
+    alors on réalise les deux déplacements
+    on se retrouve donc alors toujours dans le prochain zone, on répète l'opération et on trouvera la clé 
+
+    """
+    for i in range(2): 
+        dict_moves = {UP: None, DOWN: None, LEFT: None, RIGHT: None}
+        pos_initiale = (agent.x, agent.y)
+        move(agent, UP)
+        dict_moves[UP] = agent.msg["cell_val"]
+        move_to(agent, pos_initiale[0], pos_initiale[1])  # Retour à la position initiale
+        move(agent, DOWN)
+        dict_moves[DOWN] = agent.msg["cell_val"]
+        move_to(agent, pos_initiale[0], pos_initiale[1]) 
+        move(agent, LEFT)
+        dict_moves[LEFT] = agent.msg["cell_val"]
+        move_to(agent, pos_initiale[0], pos_initiale[1]) 
+        move(agent, RIGHT)
+        dict_moves[RIGHT] = agent.msg["cell_val"]
+        move_to(agent, pos_initiale[0], pos_initiale[1])
+        max_value = max(dict_moves.values())
+        print(max_value)
+        best_moves = [
+            key
+            for key, value in dict_moves.items() # Parcourir chaque paire clé-valeur
+            if value == max_value                # Conserver uniquement si la valeur est le maximum
+        ]# revient a etre une liste avec les direction a prendre
+        for move_direction in best_moves:
+            move(agent, move_direction)
+    #check id key or box found
+    cell_value = agent.msg["cell_val"]
+    if cell_value == KEY_TYPE:
+        found_element_add(agent, agent.x, agent.y, KEY_TYPE)
+    elif cell_value == BOX_TYPE:
+        found_element_add(agent, agent.x, agent.y, BOX_TYPE)    
+
+
+    
+
+
+
+
+    
+
         
 def found_element_add(agent,x, y,key):
     """ Function that adds the squares found to the list of found elements if not already present """   
@@ -218,6 +256,10 @@ if __name__ == "__main__":
     W,H = agent1.w, agent1.h
 
     # Map Discovery Loop
+    for i in range (5):
+        move(agent1, RIGHT)
+        if agent1.msg["cell_val"] == 0.25:
+           search_key_and_box(agent1)
+    time.sleep(2000) 
 
-    search_map(agent1)
 
