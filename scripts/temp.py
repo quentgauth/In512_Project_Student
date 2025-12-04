@@ -7,6 +7,7 @@ import time
 import math
 import warnings
 import numpy as np
+import threading
 
 elements_trouves = []
 last_move = None
@@ -16,6 +17,8 @@ def move(agent, direction):
     time.sleep(0.1)  #wait for the server to process the move
     global last_move
     last_move = direction
+    
+    agent.nbre_move += 1
 
 def get_data(agent):
     agent.network.send({"header": GET_DATA})
@@ -23,41 +26,22 @@ def get_data(agent):
     data = agent.msg
     return data
 
-def diagonal_move(agent, target_x, target_y):
-    while agent.x != target_x and agent.y != target_y:
-        if agent.x < target_x and agent.y < target_y:
-            move(agent, DOWN_RIGHT)
-        elif agent.x < target_x and agent.y > target_y:
-            move(agent, UP_RIGHT)
-        elif agent.x > target_x and agent.y < target_y:
-            move(agent, DOWN_LEFT)
-        elif agent.x > target_x and agent.y > target_y:
-            move(agent, UP_LEFT)
-
-def move_to(agent, x, y, find_objects=True):
+def move_to(agent, x, y, find_objects=False):
     """ Function that makes the agent move to the specified (x, y) position """
     
     if abs(agent.x - x) and abs(agent.y - y) != 0:
         if agent.x < x and agent.y < y:
             for i in range(min(abs(agent.x - x), abs(agent.y - y))):
                 move(agent, DOWN_RIGHT)  # Diagonal move to reduce both x and y distance
-                if find_objects:
-                    search_key_and_box(agent)
         elif agent.x < x and agent.y > y:
             for i in range(min(abs(agent.x - x), abs(agent.y - y))):
                 move(agent, UP_RIGHT)
-                if find_objects:
-                    search_key_and_box(agent)
         elif agent.x > x and agent.y < y:
             for i in range(min(abs(agent.x - x), abs(agent.y - y))):
                 move(agent, DOWN_LEFT)
-                if find_objects:
-                    search_key_and_box(agent)
         elif agent.x > x and agent.y > y:
             for i in range(min(abs(agent.x - x), abs(agent.y - y))):
                 move(agent, UP_LEFT)
-                if find_objects:
-                    search_key_and_box(agent)
     
     # Move in x direction
     for i in range(abs(agent.x - x)):
@@ -66,8 +50,6 @@ def move_to(agent, x, y, find_objects=True):
         else:
             direction = LEFT
         move(agent, direction)
-        if find_objects:
-            search_key_and_box(agent)
 
     # Move in y direction
     for i in range(abs(agent.y - y)):
@@ -76,249 +58,117 @@ def move_to(agent, x, y, find_objects=True):
         else:
             direction = UP   
         move(agent, direction)
-
+        
 def search_map(agent):
-    # Raccourcis
-    W = agent.w      # largeur fenêtre en nombre de cases
-    H = agent.h      # hauteur fenêtre en nombre de cases
+    move_to(agent, agent.start_x, 0)
 
-    # 1. Définir les pas
-    STEP = 8
+    mult_x = -1
+    mult_y = -1
 
+    for i in range(0,12):
+        if agent.x == agent.end_x or agent.x == agent.start_x:
+            mult_x *= -1
 
-    # 1. Start en haut-gauche
-    move_to(agent, 0, 0)
+            # Calculer la taille du carré à parcourir en fonction de la direction
+            if mult_y == -1 and mult_x == 1:
+                square_size = min((agent.y - 0), (agent.end_x - agent.x))
+            elif mult_y == 1 and mult_x ==1:
+                square_size = min((agent.h - agent.y), (agent.end_x- agent.x))
 
-    for i in range(0, W, STEP):
+            elif mult_y == -1 and mult_x == -1:
+                square_size = min((agent.y - 0), agent.x - agent.start_x)
 
-        if agent.y == 0:
-            move_to(agent, i, 0)
-            move_to(agent, 0, i)
-            
-        elif agent.x ==0:
-            move_to(agent, 0, i)
-            move_to(agent, i, 0)
+            elif mult_y == 1 and mult_x == -1:
+                square_size = min((agent.h - agent.y), agent.x - agent.start_x)
+
+            # Valeurs à ajouter aux coordonnées actuelles pour le déplacemen
+            add_x = square_size * mult_x
+            add_y = square_size * mult_y
         
+        if agent.y == agent.h or agent.y ==0:
 
-        # for i in range(0, w, step):
+            # Changer de direction en y
+            mult_y *= -1
 
+            # Calculer la taille du carré à parcourir en fonction de la direction
+            if mult_y == -1 and mult_x == 1:
+                square_size = min((agent.y - 0), (agent.end_x - agent.x))
+            elif mult_y == 1 and mult_x ==1:
+                square_size = min((agent.h - agent.y), (agent.end_x - agent.x))
 
+            elif mult_y == -1 and mult_x == -1:
+                square_size = min((agent.y - 0), agent.x - agent.start_x)
 
-        #     if agent.x == 0:
-        #         move_to(agent, i,0)
-        #         move_to(agent, i+step_find,0)
-        #         move_to(agent,  i-step_find,0)
+            elif mult_y == 1 and mult_x == -1:
+                square_size = min((agent.h - agent.y), agent.x - agent.start_x)
 
-        #     if agent.y == 0:
-        #         move_to(agent, 0,i)
-        #         move_to(agent, 0,i+step)
-
-        #         move_to(agent, 0, i+step_find)
-        #         move_to(agent, 0, i-step_find)
-
-
-
-
-        # move_to(agent1, 9, 0)
-
-        # move_to(agent1, 13, 0)
-
-        # move_to(agent1, 9, 0)
-
-        # move_to(agent1, 0, 9)
-
-        # move_to(agent1, 0,18)
-
-        # move_to(agent1, 18,0)
-def search_key_and_box(agent):
-    """ Function that makes the agent search for its key and box in the environment """
-
-    # Cell value before searching
-    prev_cell_val = get_data(agent)["cell_val"]
-    if prev_cell_val not in [0.25, 0.3]:
-        return
-    
-    allowed_moves = {
-        0: "STAND",
-        1: "LEFT",
-        2: "RIGHT",
-        3: "UP",
-        4: "DOWN",
-        5: "UP_LEFT",
-        6: "UP_RIGHT",
-        7: "DOWN_LEFT",
-        8: "DOWN_RIGHT"
-    }
-    move_name = allowed_moves.get(last_move, "UNKNOWN_MOVE")
-
-    last_directions = move_name.split('_')    
-
-    best = prev_cell_val
-
-    # Determine le type d'élément recherché
-    if prev_cell_val == np.float64(0.25):
-        key = KEY_TYPE
-    elif prev_cell_val == np.float64(0.3):
-        key = BOX_TYPE
-
-    directions_values = []
-    while True:
-        for direction in last_directions:
-            move(agent, direction)
-            data = get_data(agent)["cell_val"]
-            directions_values.append((direction, data))
-
-            # Retourne à la position initiale
-            if direction == "UP":
-                move(agent, DOWN)
-            elif direction == "DOWN":
-                move(agent, UP)
-            elif direction == "LEFT":
-                move(agent, RIGHT)
-            elif direction == "RIGHT":
-                move(agent, LEFT)
-            
-        # Trouve la meilleure direction
-        best_direction, best_value = max(directions_values, key=lambda x: x[1])
-        if best_value > best:
-            best = best_value
-            direction = best_direction
-            break
-        else:
-            break  # Sort de la boucle si aucune amélioration n'est trouvée
-            
-
-                # if get_data(agent)["cell_val"] == np.float64(1.0):
-                #     found_element_add(agent, agent.x, agent.y,key)
-                #     return
+            # Valeurs à ajouter aux coordonnées actuelles pour le déplacement
+            add_y = square_size * mult_y
+            add_x = square_size * mult_x
         
-def search_key_and_box2(agent):
-    """ Function that makes the agent search for its key and box in the environment """
-    prev_cell_val = get_data(agent)["cell_val"]
-    if prev_cell_val not in [0.25, 0.3]:
-        return
+        print(f"Robot from ({agent.x},{agent.y}) moving to ({agent.x + add_x},{agent.y + add_y}) with square size {square_size}")
+        move_to(agent, agent.x + add_x, agent.y + add_y)
 
-    best = prev_cell_val
-    directions = []
-    if prev_cell_val == np.float64(0.25):
-        key = KEY_TYPE
-    elif prev_cell_val == np.float64(0.3):
-        key = BOX_TYPE
 
-# TODO : Réparer cette boucle while (Regarder si toutes les directions sont bien testées (fonctionne si le robot vient d'en haut ou du bas mais pas sur les côtés))
+def search_map2(agent):
+    move_to(agent, agent.start_x, 0)
 
-    while True:
+    mult_x = -1
+    mult_y = -1
+
+    square_size = 8
+
+    for i in range(0,12):
+        if agent.x == agent.end_x or agent.x == agent.start_x:
+            mult_x *= -1
+
+            # Valeurs à ajouter aux coordonnées actuelles pour le déplacemen
+            add_x = square_size * mult_x
+            add_y = square_size * mult_y
         
-        # Bouge Bas Droite
-        move(agent, DOWN_RIGHT)
-        data = get_data(agent)["cell_val"]
-        if data > best:
-            best = data
-            directions = [DOWN, RIGHT]
-            
-        else:
-            move(agent, UP_LEFT)  # Retourne à la position initiale
+        if agent.y == agent.h or agent.y ==0:
 
-            # Bouge Bas Gauche
-            move(agent, UP_LEFT)
-            data = get_data(agent)["cell_val"]
-            if data > best:
-                best = data
-                directions = [UP, LEFT]
-            else:
-                move(agent, DOWN_RIGHT)  # Retourne à la position initiale
+            # Changer de direction en y
+            mult_y *= -1
 
-        
-        # Bouge Haut Gauche
-        move(agent, DOWN_LEFT)
-        data = get_data(agent)["cell_val"]
-        if data > best and LEFT in directions:
-            best = data
-            direction = LEFT
-            break
-        elif data > best and DOWN in directions:
-            best = data
-            direction = DOWN
-            break
-        else:
-            move(agent, UP_RIGHT)  # Retourne à la position initiale
+            # Valeurs à ajouter aux coordonnées actuelles pour le déplacement
+            add_y = square_size * mult_y
+            add_x = square_size * mult_x
 
-        # Bouge Haut Droite
-        move(agent, UP_RIGHT)
-        data = get_data(agent)["cell_val"]
-        if data == best:
-            direction = DOWN  # Par défaut si rien de mieux n'est trouvé
-            break
-        if data > best and RIGHT in directions:
-            best = data
-            direction = RIGHT
-            break
-        elif data > best and UP in directions:
-            best = data
-            direction = UP
-            break
-        else:
-            direction = UP  # Par défaut si rien de mieux n'est trouvé
-            break
+        print(f"Robot from ({agent.x},{agent.y}) moving to ({agent.x + add_x},{agent.y + add_y}) with square size {square_size}")
+        move_to(agent, agent.x + add_x, agent.y + add_y)
 
-
-    time.sleep(3)
-    if direction == DOWN:
-
-        move(agent, DOWN_LEFT)
-        data = get_data(agent)["cell_val"]
-
-        if data > best:
-            found_element_add(agent, agent.x, agent.y,key)
-        elif data < best:
-            move(agent, RIGHT)
-            move(agent, RIGHT)
-            if get_data(agent)["cell_val"] == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y,key)
-        elif data == best:
-            move(agent, RIGHT)
-            if get_data(agent)["cell_val"] == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y,key)
-
-    elif direction == UP:
-
-        move(agent, UP_LEFT)
-        data = get_data(agent)["cell_val"]
-
-        if data > best:
-            found_element_add(agent, agent.x, agent.y,key)
-        elif data < best:
-            move(agent, RIGHT)
-            move(agent, RIGHT)
-            if get_data(agent)["cell_val"] == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y,key)
-        elif data == best:
-            move(agent, RIGHT)
-            if get_data(agent)["cell_val"] == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y,key)
-
-def found_element_add(agent,x, y,key):
-    """ Function that adds the squares found to the list of found elements if not already present """   
-    data = {"coordinates":None,"type": key}
-    agent.network.send({"header": KEY_DISCOVERED if key==KEY_TYPE else BOX_DISCOVERED, "x": x, "y": y})
-    if (x, y) not in elements_trouves:
-        square_coordinates = [(x + dx, y + dy) for dx in range(-2, 3) for dy in range(-2, 3)]
-        data["coordinates"] = square_coordinates
-        elements_trouves.append(data)
 
 if __name__ == "__main__":
 
     port = 5555
     ip_server = "localhost"
     nb_agents = 2
-    map_id = 1
     
-    agent1 = Agent(ip_server)
-    agent2 = Agent(ip_server)
-    
-    w, h = agent1.w, agent1.h
+    agents = []
+    for i in range(nb_agents):
+        agent = Agent(ip_server)
+        agents.append(agent)
+
+    map_w, map_h = agents[0].w, agents[0].h
+
+    w = map_w//nb_agents
+
+    # Modifier les attributs de chaque agent pour diviser la carte
+    for i in range(nb_agents):
+        agents[i].w = w *i
+        agents[i].h = map_h - 1
+        agents[i].start_x = w * i
+        agents[i].end_x = w * (i + 1)
+
+        # Initialiser le compteur de mouvements pour chaque agent
+        agents[i].nbre_move = 0
 
     # Map Discovery Loop
+    for agent in agents:
+        threading.Thread(target=search_map, args=(agent,)).start()
+        time.sleep(1)
+    # threading.Thread(target=search_map, args=(agents[0],)).start()
 
-    search_map(agent1)
-
+    # search_map(agents[0])
+    # print("Number of moves made:", agents[1].nbre_move)
