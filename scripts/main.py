@@ -74,19 +74,19 @@ def search_map(agent):
     # 1. Définir les pas
     STEP = 8
 
-
     # 1. Start en haut-gauche
     move_to(agent, 0, 0)
 
+    find_objects = True
     for i in range(0, W, STEP):
 
         if agent.y == 0:
-            move_to(agent, i, 0)
-            move_to(agent, 0, i)
+            move_to(agent, i, 0, find_objects=find_objects)
+            move_to(agent, 0, i, find_objects=find_objects)
             
         elif agent.x ==0:
-            move_to(agent, 0, i)
-            move_to(agent, i, 0)
+            move_to(agent, 0, i, find_objects=find_objects)
+            move_to(agent, i, 0, find_objects=find_objects)
         
 
         # for i in range(0, w, step):
@@ -120,6 +120,17 @@ def search_map(agent):
 
         # move_to(agent1, 18,0)
 
+def move_back(agent, direction):
+    """ Function that makes the agent move back to its previous position """
+    if direction == UP:
+        move(agent, DOWN)
+    elif direction == DOWN:
+        move(agent, UP)
+    elif direction == LEFT:
+        move(agent, RIGHT)
+    elif direction == RIGHT:
+        move(agent, LEFT)
+
 def search_key_and_box(agent):
     """ Function that makes the agent search for its key and box in the environment """
 
@@ -143,6 +154,14 @@ def search_key_and_box(agent):
 
     last_directions = move_name.split('_')    
 
+    values = list(allowed_moves.values())
+    keys = list(allowed_moves.keys())
+
+    for direction in last_directions:
+        index  = values.index(direction)
+        last_directions[last_directions.index(direction)] = keys[index]
+    
+
     best = prev_cell_val
 
     # Determine le type d'élément recherché
@@ -152,6 +171,7 @@ def search_key_and_box(agent):
         key = BOX_TYPE
 
     directions_values = []
+    
     while True:
         for direction in last_directions:
             move(agent, direction)
@@ -159,18 +179,10 @@ def search_key_and_box(agent):
             directions_values.append((direction, data))
 
             # Retourne à la position initiale
-            if direction == "UP":
-                move(agent, UP)
-            elif direction == "DOWN":
-                move(agent, DOWN)
-            elif direction == "LEFT":
-                move(agent, LEFT)
-            elif direction == "RIGHT":
-                move(agent, RIGHT)
+            move_back(agent, direction)
             
         # Trouve la meilleure direction
         for i in range(len(directions_values)):
-            time.sleep(4)
 
             if directions_values[i][1] > best:
                 best = directions_values[i][1]
