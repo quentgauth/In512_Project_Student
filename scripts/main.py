@@ -207,12 +207,19 @@ def process_item(agent, visited):
                     agent.my_key_pos = pos
                     agent.has_key = True
                     print(f"Agent {agent.agent_id}: ★ KEY at {pos}")
-                else:
+                    return True, pos
+                else:  # BOX_TYPE
                     agent.my_box_pos = pos
-                    agent.has_box = True
-                    agent.completed = True  # STOP immediately!
-                    print(f"Agent {agent.agent_id}: ★ BOX at {pos}")
-                return True, pos
+                    # Only claim box if we have the key!
+                    if agent.has_key:
+                        agent.has_box = True
+                        agent.completed = True
+                        print(f"Agent {agent.agent_id}: ★ BOX at {pos}")
+                        return True, pos
+                    else:
+                        # Found our box but don't have key - remember position and go get key
+                        print(f"Agent {agent.agent_id}: Found my BOX at {pos} but need KEY first!")
+                        return False, pos  # Continue to find key
             print(f"Agent {agent.agent_id}: Item for {owner} at {pos}")
             return False, pos
     return False, None
@@ -329,9 +336,8 @@ def sweep_zone(agent, visited, x_start, x_end, y_start, y_end, STEP):
 
 def optimal_sweep(agent, visited):
     """
-    Optimal sweep strategy for 1-4 agents.
-    - STEP = 4 (guaranteed detection with halo radius 2)
-    - Map divided based on number of agents
+    Optimal sweep strategy for 1-4 agents with dynamic zone adaptation.
+    When an agent finishes its zone, it explores zones of completed agents.
     """
     W, H = agent.w, agent.h
     STEP = 4
@@ -349,14 +355,35 @@ def optimal_sweep(agent, visited):
     if sweep_zone(agent, visited, x1, x2, y1, y2, STEP):
         return
     
-    # If not found, explore remaining map
     if agent.has_key and agent.has_box:
         return
     
-    print(f"Agent {agent.agent_id}: Exploring rest of map...")
+    # Smart fallback: explore zones of OTHER agents
+    # Priority: agents who have completed (we know both their key and box)
+    for other_id in range(nb_agents):
+        if other_id == agent.agent_id:
+            continue
+        
+        if check_known_items(agent):
+            return
+        
+        # Get other agent's zone
+        ox1, ox2, oy1, oy2 = get_zone_for_agent(other_id, nb_agents, W, H)
+        
+        # Check if we've likely covered this zone (if we know the other's items)
+        other_key_known = other_id in agent.other_keys
+        other_box_known = other_id in agent.other_boxes
+        
+        # If we already know the other's items, their zone might still have our items
+        if not (agent.has_key and agent.has_box):
+            print(f"Agent {agent.agent_id}: Exploring Agent {other_id}'s zone ({ox1},{oy1}) to ({ox2},{oy2})")
+            if sweep_zone(agent, visited, ox1, ox2, oy1, oy2, STEP):
+                return
     
-    # Sweep full map as fallback
-    sweep_zone(agent, visited, 0, W, 0, H, STEP)
+    # Final fallback: full map sweep
+    if not (agent.has_key and agent.has_box):
+        print(f"Agent {agent.agent_id}: Full map sweep...")
+        sweep_zone(agent, visited, 0, W, 0, H, STEP)
 
 
 def agent_loop(agent):
