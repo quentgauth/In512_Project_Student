@@ -15,7 +15,19 @@ from time import sleep
 class Agent:
     """ Class that implements the behaviour of each agent based on their perception and communication with other agents """
     def __init__(self, server_ip):
-        #TODO: DEINE YOUR ATTRIBUTES HERE
+        # State tracking for discoveries
+        self.my_key_pos = None      # (x, y) of my own key
+        self.my_box_pos = None      # (x, y) of my own box (treasure)
+        self.has_key = False        # True when own key is found
+        self.has_box = False        # True when own box is found
+        self.completed = False      # True when both key and box are found
+        
+        # Store discoveries from other agents: {agent_id: (x, y)}
+        self.other_keys = {}
+        self.other_boxes = {}
+        
+        # Pending messages queue for broadcast processing
+        self.pending_broadcasts = []
 
         #DO NOT TOUCH THE FOLLOWING INSTRUCTIONS
         self.network = Network(server_ip=server_ip)
@@ -29,9 +41,8 @@ class Agent:
         self.x, self.y = env_conf["x"], env_conf["y"]   #initial agent position
         self.w, self.h = env_conf["w"], env_conf["h"]   #environment dimensions
         cell_val = env_conf["cell_val"] #value of the cell the agent is located in
-        print(cell_val)
+        print(f"Agent {self.agent_id} initialized at ({self.x}, {self.y}) - cell_val: {cell_val}")
         Thread(target=self.msg_cb, daemon=True).start()
-        print("hello")
         self.wait_for_connected_agent()
 
         
@@ -40,16 +51,48 @@ class Agent:
         while self.running:
             msg = self.network.receive()
             self.msg = msg
+            
             if msg["header"] == MOVE:
-                self.x, self.y =  msg["x"], msg["y"]
-                print(self.x, self.y)
+                self.x, self.y = msg["x"], msg["y"]
             elif msg["header"] == GET_NB_AGENTS:
                 self.nb_agent_expected = msg["nb_agents"]
             elif msg["header"] == GET_NB_CONNECTED_AGENTS:
                 self.nb_agent_connected = msg["nb_connected_agents"]
-
-            print("hellooo: ", msg)
-            print("agent_id ", self.agent_id)
+            elif msg["header"] == BROADCAST_MSG:
+                # Handle broadcast from another agent
+                self._handle_broadcast(msg)
+            
+    def _handle_broadcast(self, msg):
+        """Process broadcast messages from other agents"""
+        sender = msg.get("sender")
+        msg_type = msg.get("Msg type")
+        position = msg.get("position")
+        owner = msg.get("owner")
+        
+        if msg_type == KEY_DISCOVERED:
+            # Another agent found a key
+            if owner == self.agent_id:
+                # It's MY key! Store it
+                self.my_key_pos = position
+                print(f"Agent {self.agent_id}: Another agent found my key at {position}!")
+            else:
+                # It's someone else's key
+                self.other_keys[owner] = position
+                print(f"Agent {self.agent_id}: Agent {sender} found key for agent {owner} at {position}")
+                
+        elif msg_type == BOX_DISCOVERED:
+            # Another agent found a box
+            if owner == self.agent_id:
+                # It's MY box! Store it
+                self.my_box_pos = position
+                print(f"Agent {self.agent_id}: Another agent found my box at {position}!")
+            else:
+                # It's someone else's box
+                self.other_boxes[owner] = position
+                print(f"Agent {self.agent_id}: Agent {sender} found box for agent {owner} at {position}")
+                
+        elif msg_type == COMPLETED:
+            print(f"Agent {self.agent_id}: Agent {sender} has completed their mission!")
             
 
     def wait_for_connected_agent(self):

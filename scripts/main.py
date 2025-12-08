@@ -2,279 +2,428 @@ import sys
 from server import Server
 from agent import Agent
 from my_constants import *
-from random import randint
+from threading import Thread
 import time
-import math
-import warnings
 import numpy as np
 
-elements_trouves = []
-last_move = None
-agent_progress = {}  # track per-agent discovery state
+# Directions
+OPPOSITE = {
+    STAND: STAND, LEFT: RIGHT, RIGHT: LEFT, UP: DOWN, DOWN: UP,
+    UP_LEFT: DOWN_RIGHT, UP_RIGHT: DOWN_LEFT, DOWN_LEFT: UP_RIGHT, DOWN_RIGHT: UP_LEFT,
+}
+GRADIENT_DIRS = [UP_LEFT, UP_RIGHT, DOWN_LEFT, DOWN_RIGHT, UP, DOWN, LEFT, RIGHT]
 
-# Directions helpers to reason about local probing
-DIR_OFFSETS = {
-    STAND: (0, 0),
-    LEFT: (-1, 0),
-    RIGHT: (1, 0),
-    UP: (0, -1),
-    DOWN: (0, 1),
-    UP_LEFT: (-1, -1),
-    UP_RIGHT: (1, -1),
-    DOWN_LEFT: (-1, 1),
-    DOWN_RIGHT: (1, 1),
-}
-OPPOSITE_DIR = {
-    STAND: STAND,
-    LEFT: RIGHT,
-    RIGHT: LEFT,
-    UP: DOWN,
-    DOWN: UP,
-    UP_LEFT: DOWN_RIGHT,
-    UP_RIGHT: DOWN_LEFT,
-    DOWN_LEFT: UP_RIGHT,
-    DOWN_RIGHT: UP_LEFT,
-}
-# When we détect a halo, prioritize probing around the last move to reduce travel
-SCAN_PRIORITIES = {
-    LEFT: [LEFT, UP_LEFT, DOWN_LEFT, UP, DOWN, UP_RIGHT, DOWN_RIGHT, RIGHT],
-    RIGHT: [RIGHT, UP_RIGHT, DOWN_RIGHT, UP, DOWN, UP_LEFT, DOWN_LEFT, LEFT],
-    UP: [UP, UP_LEFT, UP_RIGHT, LEFT, RIGHT, DOWN_LEFT, DOWN_RIGHT, DOWN],
-    DOWN: [DOWN, DOWN_LEFT, DOWN_RIGHT, LEFT, RIGHT, UP_LEFT, UP_RIGHT, UP],
-}
-DEFAULT_SCAN_ORDER = [UP, DOWN, LEFT, RIGHT, UP_LEFT, UP_RIGHT, DOWN_LEFT, DOWN_RIGHT]
 
-def move(agent, direction):
-    agent.network.send({"header": MOVE, "direction": direction})
-    time.sleep(0.1)  #wait for the server to process the move
-    global last_move
-    last_move = direction
+def move(agent, d):
+    if agent.completed:  # Don't move if already done
+        print(f"⚠️ Agent {agent.agent_id}: BLOCKED MOVE (completed)")
+        return
+    agent.network.send({"header": MOVE, "direction": d})
+    time.sleep(0.03)
+
 
 def get_data(agent):
     agent.network.send({"header": GET_DATA})
-    time.sleep(0.1)  #wait for the server to process the request
-    data = agent.msg
-    return data
+    time.sleep(0.02)
+    return agent.msg
 
-def probe_neighbors(agent, scan_order):
-    """
-    Probe surrounding cells following scan_order (list of direction constants).
-    Moves out-and-back for each candidate to keep the agent at its starting pose.
-    Returns (best_dir, best_val).
-    """
-    current_val = get_data(agent)["cell_val"]
-    best_val = current_val
-    best_dir = None
 
-    for direction in scan_order:
-        move(agent, direction)
-        val = get_data(agent)["cell_val"]
-        if val > best_val:
-            best_val = val
-            best_dir = direction
-        # return to the origin to avoid drifting during probing
-        move(agent, OPPOSITE_DIR[direction])
-    return best_dir, best_val
+def get_item_owner(agent):
+    agent.network.send({"header": GET_ITEM_OWNER})
+    time.sleep(0.02)
+    return agent.msg
 
-def scan_local_area(agent, radius, target_type):
-    """
-    Deterministic serpentine scan of the square centered on the agent with given radius.
-    Visits each cell within Chebyshev distance <= radius, early-exits on target found.
-    """
-    start_x, start_y = agent.x, agent.y
-    w, h = agent.w, agent.h
 
-    for dy in range(-radius, radius + 1):
-        xs = list(range(-radius, radius + 1))
-        if dy % 2 != 0:
-            xs.reverse()  # serpentine to reduce backtracking
-        for dx in xs:
-            tx, ty = start_x + dx, start_y + dy
-            if not (0 <= tx < w and 0 <= ty < h):
-                continue
-            if tx == agent.x and ty == agent.y:
-                cell_val = get_data(agent)["cell_val"]
+def broadcast(agent, itype, owner, pos):
+    agent.network.send({
+        "header": BROADCAST_MSG,
+        "Msg type": KEY_DISCOVERED if itype == KEY_TYPE else BOX_DISCOVERED,
+        "position": pos, "owner": owner
+    })
+
+
+def move_step(agent, tx, ty):
+    """One step toward target using diagonal if possible"""
+    if agent.completed:  # Don't move if already done
+        return False
+    if agent.x == tx and agent.y == ty:
+        return False
+    dx, dy = tx - agent.x, ty - agent.y
+    if dx > 0 and dy > 0: d = DOWN_RIGHT
+    elif dx > 0 and dy < 0: d = UP_RIGHT
+    elif dx < 0 and dy > 0: d = DOWN_LEFT
+    elif dx < 0 and dy < 0: d = UP_LEFT
+    elif dx > 0: d = RIGHT
+    elif dx < 0: d = LEFT
+    elif dy > 0: d = DOWN
+    else: d = UP
+    move(agent, d)
+    return True
+
+
+def move_to(agent, tx, ty):
+    while agent.x != tx or agent.y != ty:
+        if agent.completed:  # Stop if already done
+            return
+        move_step(agent, tx, ty)
+
+
+def claim_known_item(agent, pos, is_key):
+    """Go DIRECTLY to known item position and claim it (no gradient needed)"""
+    # Don't do anything if already complete
+    if agent.has_key and agent.has_box:
+        return True
+    
+    print(f"Agent {agent.agent_id}: → Direct to {'key' if is_key else 'box'} at {pos}")
+    move_to(agent, pos[0], pos[1])
+    
+    # Verify and claim
+    val = get_data(agent).get("cell_val", 0)
+    if val == 1.0:
+        info = get_item_owner(agent)
+        if info and info.get("owner") == agent.agent_id:
+            if is_key:
+                agent.has_key = True
+                print(f"Agent {agent.agent_id}: ★ KEY claimed at {pos}")
             else:
-                move_to(agent, tx, ty, find_objects=False)
-                cell_val = get_data(agent)["cell_val"]
-            if cell_val == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y, target_type)
-                return True
-    # return to starting point after scan
-    move_to(agent, start_x, start_y, find_objects=False)
+                agent.has_box = True
+                agent.completed = True  # STOP immediately!
+                print(f"Agent {agent.agent_id}: ★ BOX claimed at {pos}")
+            return True
     return False
 
-def get_progress(agent):
-    """Return mutable progress dict for this agent."""
-    if agent.agent_id not in agent_progress:
-        agent_progress[agent.agent_id] = {"key_found": False, "box_found": False}
-    return agent_progress[agent.agent_id]
 
-# def diagonal_move(agent, target_x, target_y):
-#     while agent.x != target_x and agent.y != target_y:
-#         if agent.x < target_x and agent.y < target_y:
-#             move(agent, DOWN_RIGHT)
-#         elif agent.x < target_x and agent.y > target_y:
-#             move(agent, UP_RIGHT)
-#         elif agent.x > target_x and agent.y < target_y:
-#             move(agent, DOWN_LEFT)
-#         elif agent.x > target_x and agent.y > target_y:
-#             move(agent, UP_LEFT)
-
-def move_to(agent, x, y, find_objects=True):
-    """ Function that makes the agent move to the specified (x, y) position """
-    
-    if abs(agent.x - x) and abs(agent.y - y) != 0:
-        if agent.x < x and agent.y < y:
-            for i in range(min(abs(agent.x - x), abs(agent.y - y))):
-                move(agent, DOWN_RIGHT)  # Diagonal move to reduce both x and y distance
-                if find_objects:
-                    search_key_and_box(agent)
-        elif agent.x < x and agent.y > y:
-            for i in range(min(abs(agent.x - x), abs(agent.y - y))):
-                move(agent, UP_RIGHT)
-                if find_objects:
-                    search_key_and_box(agent)
-        elif agent.x > x and agent.y < y:
-            for i in range(min(abs(agent.x - x), abs(agent.y - y))):
-                move(agent, DOWN_LEFT)
-                if find_objects:
-                    search_key_and_box(agent)
-        elif agent.x > x and agent.y > y:
-            for i in range(min(abs(agent.x - x), abs(agent.y - y))):
-                move(agent, UP_LEFT)
-                if find_objects:
-                    search_key_and_box(agent)
-    
-    # Move in x direction
-    for i in range(abs(agent.x - x)):
-        if agent.x < x:
-            direction = RIGHT
-        else:
-            direction = LEFT
-        move(agent, direction)
-        if find_objects:
-            search_key_and_box(agent)
-
-    # Move in y direction
-    for i in range(abs(agent.y - y)):
-        if agent.y < y:
-            direction = DOWN
-        else:
-            direction = UP   
-        move(agent, direction)
-
-def search_map(agent):
-    # Raccourcis
-    W = agent.w      # largeur fenêtre en nombre de cases
-    H = agent.h      # hauteur fenêtre en nombre de cases
-
-    # 1. Définir les pas
-    STEP = 8
-
-
-    # 1. Start en haut-gauche
-    move_to(agent, 0, 0)
-
-    for i in range(0, W, STEP):
-
-        if agent.y == 0:
-            move_to(agent, i, 0)
-            move_to(agent, 0, i)
-            
-        elif agent.x ==0:
-            move_to(agent, 0, i)
-            move_to(agent, i, 0)
-        
-
-        # for i in range(0, w, step):
-
-
-
-        #     if agent.x == 0:
-        #         move_to(agent, i,0)
-        #         move_to(agent, i+step_find,0)
-        #         move_to(agent,  i-step_find,0)
-
-        #     if agent.y == 0:
-        #         move_to(agent, 0,i)
-        #         move_to(agent, 0,i+step)
-
-        #         move_to(agent, 0, i+step_find)
-        #         move_to(agent, 0, i-step_find)
-
-
-
-
-        # move_to(agent1, 9, 0)
-
-        # move_to(agent1, 13, 0)
-
-        # move_to(agent1, 9, 0)
-
-        # move_to(agent1, 0, 9)
-
-        # move_to(agent1, 0,18)
-
-        # move_to(agent1, 18,0)
-        
-def search_key_and_box(agent):
+def smart_find_item(agent, visited):
     """
-    When we stand on a halo (0.25/0.3/0.5/0.6), scan the known halo square
-    (radius 1 or 2) with minimal moves to reach the item (cell_val == 1),
-    then resume the global sweep.
+    Smart item detection using triangulation:
+    - val 0.5/0.6 = item is adjacent (1 step away) → check 8 neighbors ONCE
+    - val 0.25/0.3 = item is 2 steps away → triangulate with 2 probes
+    Returns (is_own_item, position)
     """
-    current_val = get_data(agent)["cell_val"]
-    if current_val not in [0.25, 0.3, 0.5, 0.6]:
-        return
-
-    progress = get_progress(agent)
-    is_key_halo = current_val in [0.25, 0.5]
-    is_box_halo = current_val in [0.3, 0.6]
-
-    # If we've already found this type, ignore its halo to continue the global sweep
-    if (is_key_halo and progress["key_found"]) or (is_box_halo and progress["box_found"]):
-        return
-
-    target_type = KEY_TYPE if is_key_halo else BOX_TYPE
-    radius = 1 if current_val in [0.5, 0.6] else 2
-    found = scan_local_area(agent, radius, target_type)
-    if not found:
-        # fallback to short gradient climb if scan did not hit (robustness)
-        scan_order = SCAN_PRIORITIES.get(last_move, DEFAULT_SCAN_ORDER)
-        best_dir, best_val = probe_neighbors(agent, scan_order)
-        if best_val > current_val and best_dir is not None:
-            move(agent, best_dir)
-            if get_data(agent)["cell_val"] == np.float64(1.0):
-                found_element_add(agent, agent.x, agent.y, target_type)
-                return
+    # Don't search if already completed
+    if agent.completed:
+        return False, None
     
-def found_element_add(agent,x, y,key):
-    """ Function that adds the squares found to the list of found elements if not already present """   
-    data = {"coordinates":None,"type": key}
-    agent.network.send({"header": KEY_DISCOVERED if key==KEY_TYPE else BOX_DISCOVERED, "x": x, "y": y})
-    progress = get_progress(agent)
-    if key == KEY_TYPE:
-        progress["key_found"] = True
+    val = get_data(agent).get("cell_val", 0)
+    pos = (agent.x, agent.y)
+    
+    if val <= 0:
+        return False, None
+    
+    # Already on item
+    if val == 1.0:
+        return process_item(agent, visited)
+    
+    # ADJACENT (0.5 or 0.6): item is 1 step away - just scan 8 neighbors once
+    if val >= 0.5:
+        for d in GRADIENT_DIRS:
+            move(agent, d)
+            if get_data(agent).get("cell_val", 0) == 1.0:
+                return process_item(agent, visited)
+            move(agent, OPPOSITE[d])
+        return False, None
+    
+    # NEAR (0.25 or 0.3): item is 2 steps away - triangulate
+    # Strategy: probe 2 opposite corners to find direction, then go direct
+    start_x, start_y = agent.x, agent.y
+    
+    # Probe diagonal corners to triangulate
+    probes = []
+    for d in [UP_LEFT, DOWN_RIGHT]:  # Two opposite corners
+        move(agent, d)
+        v = get_data(agent).get("cell_val", 0)
+        probes.append((d, v, agent.x, agent.y))
+        move(agent, OPPOSITE[d])
+    
+    # Find best probe
+    best = max(probes, key=lambda p: p[1])
+    
+    if best[1] > val:
+        # Move toward the better value
+        move(agent, best[0])
+        
+        # If now adjacent or on item, find it
+        new_val = get_data(agent).get("cell_val", 0)
+        if new_val == 1.0:
+            return process_item(agent, visited)
+        elif new_val >= 0.5:
+            # Now adjacent - quick scan
+            for d in GRADIENT_DIRS:
+                move(agent, d)
+                if get_data(agent).get("cell_val", 0) == 1.0:
+                    return process_item(agent, visited)
+                move(agent, OPPOSITE[d])
+        elif new_val > val:
+            # Keep following in same direction
+            for _ in range(3):
+                move(agent, best[0])
+                v = get_data(agent).get("cell_val", 0)
+                if v == 1.0:
+                    return process_item(agent, visited)
+                if v < new_val:
+                    break
+                new_val = v
     else:
-        progress["box_found"] = True
-    if (x, y) not in elements_trouves:
-        square_coordinates = [(x + dx, y + dy) for dx in range(-2, 3) for dy in range(-2, 3)]
-        data["coordinates"] = square_coordinates
-        elements_trouves.append(data)
+        # Try the other diagonal pair
+        for d in [UP_RIGHT, DOWN_LEFT]:
+            move(agent, d)
+            v = get_data(agent).get("cell_val", 0)
+            if v == 1.0:
+                return process_item(agent, visited)
+            if v >= 0.5:
+                # Adjacent - quick scan remaining
+                for d2 in GRADIENT_DIRS:
+                    move(agent, d2)
+                    if get_data(agent).get("cell_val", 0) == 1.0:
+                        return process_item(agent, visited)
+                    move(agent, OPPOSITE[d2])
+                return False, None
+            if v > val:
+                # Continue this direction
+                for _ in range(2):
+                    move(agent, d)
+                    if get_data(agent).get("cell_val", 0) == 1.0:
+                        return process_item(agent, visited)
+                return False, None
+            move(agent, OPPOSITE[d])
+    
+    return False, None
+
+
+def process_item(agent, visited):
+    """Process an item at current position (val == 1.0)"""
+    pos = (agent.x, agent.y)
+    if pos in visited:
+        return False, pos
+    
+    info = get_item_owner(agent)
+    if info and info.get("header") == GET_ITEM_OWNER:
+        owner, itype = info.get("owner"), info.get("type")
+        if owner is not None:
+            broadcast(agent, itype, owner, pos)
+            visited.add(pos)
+            if owner == agent.agent_id:
+                if itype == KEY_TYPE:
+                    agent.my_key_pos = pos
+                    agent.has_key = True
+                    print(f"Agent {agent.agent_id}: ★ KEY at {pos}")
+                else:
+                    agent.my_box_pos = pos
+                    agent.has_box = True
+                    agent.completed = True  # STOP immediately!
+                    print(f"Agent {agent.agent_id}: ★ BOX at {pos}")
+                return True, pos
+            print(f"Agent {agent.agent_id}: Item for {owner} at {pos}")
+            return False, pos
+    return False, None
+
+
+def near_visited(agent, visited):
+    """Check if we're near a visited item or a known item of another agent"""
+    # Check visited set
+    for vx, vy in visited:
+        if abs(agent.x - vx) <= 2 and abs(agent.y - vy) <= 2:
+            return True
+    
+    # Check known items of other agents (skip their halos)
+    for owner, pos in agent.other_keys.items():
+        if pos and abs(agent.x - pos[0]) <= 2 and abs(agent.y - pos[1]) <= 2:
+            return True
+    for owner, pos in agent.other_boxes.items():
+        if pos and abs(agent.x - pos[0]) <= 2 and abs(agent.y - pos[1]) <= 2:
+            return True
+    
+    return False
+
+
+def check_known_items(agent):
+    """Check if we know where our items are and go get them directly.
+    Returns True if mission complete (has both key and box)."""
+    # Priority 1: Get key if we know where it is
+    if not agent.has_key and agent.my_key_pos:
+        claim_known_item(agent, agent.my_key_pos, is_key=True)
+    
+    # Priority 2: Get box if we have key and know where box is
+    if agent.has_key and not agent.has_box and agent.my_box_pos:
+        claim_known_item(agent, agent.my_box_pos, is_key=False)
+    
+    # Return True if mission complete
+    return agent.has_key and agent.has_box
+
+
+def get_zone_for_agent(agent_id, nb_agents, W, H):
+    """
+    Divide map into zones based on number of agents.
+    Returns (x_start, x_end, y_start, y_end) for this agent's zone.
+    """
+    OVERLAP = 2  # Overlap between zones to not miss items at boundaries
+    
+    if nb_agents == 1:
+        # Single agent: explore full map
+        return 0, W, 0, H
+    
+    elif nb_agents == 2:
+        # 2 agents: left/right split
+        if agent_id == 0:
+            return 0, W // 2 + OVERLAP, 0, H
+        else:
+            return W // 2 - OVERLAP, W, 0, H
+    
+    else:  # 3 or 4 agents: quadrant split
+        # Agent 0: top-left, Agent 1: top-right
+        # Agent 2: bottom-left, Agent 3: bottom-right
+        mid_x, mid_y = W // 2, H // 2
+        
+        if agent_id == 0:
+            return 0, mid_x + OVERLAP, 0, mid_y + OVERLAP
+        elif agent_id == 1:
+            return mid_x - OVERLAP, W, 0, mid_y + OVERLAP
+        elif agent_id == 2:
+            return 0, mid_x + OVERLAP, mid_y - OVERLAP, H
+        else:  # agent_id == 3
+            return mid_x - OVERLAP, W, mid_y - OVERLAP, H
+
+
+def sweep_zone(agent, visited, x_start, x_end, y_start, y_end, STEP):
+    """Sweep a specific zone of the map"""
+    going_right = (agent.agent_id % 2 == 0)  # Alternate start direction
+    y = y_start
+    
+    while y < y_end:
+        if check_known_items(agent):
+            return True
+        
+        if going_right:
+            x_range = range(x_start, x_end, STEP)
+        else:
+            x_range = range(min(x_end - 1, agent.w - 1), x_start - 1, -STEP)
+        
+        for x in x_range:
+            if check_known_items(agent):
+                return True
+            
+            x = max(0, min(x, agent.w - 1))
+            target_y = max(0, min(y, agent.h - 1))
+            
+            while agent.x != x or agent.y != target_y:
+                move_step(agent, x, target_y)
+                val = get_data(agent).get("cell_val", 0)
+                
+                if val > 0 and val < 1.0 and not near_visited(agent, visited):
+                    smart_find_item(agent, visited)
+                    if check_known_items(agent):
+                        return True
+            
+            val = get_data(agent).get("cell_val", 0)
+            if val > 0 and not near_visited(agent, visited):
+                smart_find_item(agent, visited)
+            
+            if agent.has_key and agent.has_box:
+                return True
+        
+        y += STEP
+        going_right = not going_right
+    
+    return False
+
+
+def optimal_sweep(agent, visited):
+    """
+    Optimal sweep strategy for 1-4 agents.
+    - STEP = 4 (guaranteed detection with halo radius 2)
+    - Map divided based on number of agents
+    """
+    W, H = agent.w, agent.h
+    STEP = 4
+    nb_agents = agent.nb_agent_expected
+    
+    # Check known items first
+    if check_known_items(agent):
+        return
+    
+    # Get this agent's primary zone
+    x1, x2, y1, y2 = get_zone_for_agent(agent.agent_id, nb_agents, W, H)
+    print(f"Agent {agent.agent_id}: Sweeping zone ({x1},{y1}) to ({x2},{y2})")
+    
+    # Sweep primary zone
+    if sweep_zone(agent, visited, x1, x2, y1, y2, STEP):
+        return
+    
+    # If not found, explore remaining map
+    if agent.has_key and agent.has_box:
+        return
+    
+    print(f"Agent {agent.agent_id}: Exploring rest of map...")
+    
+    # Sweep full map as fallback
+    sweep_zone(agent, visited, 0, W, 0, H, STEP)
+
+
+def agent_loop(agent):
+    print(f"Agent {agent.agent_id}: Start ({agent.x}, {agent.y})")
+    visited = set()
+    
+    try:
+        while not agent.completed:
+            optimal_sweep(agent, visited)
+            
+            if agent.has_key and agent.has_box:
+                agent.completed = True
+                agent.network.send({
+                    "header": BROADCAST_MSG, "Msg type": COMPLETED,
+                    "position": (agent.x, agent.y), "owner": agent.agent_id
+                })
+                print(f"Agent {agent.agent_id}: ═══ DONE ═══")
+                break
+            
+            time.sleep(0.1)
+    except Exception as e:
+        import traceback
+        print(f"Agent {agent.agent_id}: Error: {e}")
+        traceback.print_exc()
+
 
 if __name__ == "__main__":
-
-    port = 5555
-    ip_server = "localhost"
-    nb_agents = 2
-    map_id = 1
+    import sys
     
-    agent1 = Agent(ip_server)
-    agent2 = Agent(ip_server)
+    print("Starting agents...")
     
-    w, h = agent1.w, agent1.h
+    # Create first agent
+    agents = [Agent("localhost")]
+    
+    # Wait until we know how many agents are expected
+    while agents[0].nb_agent_expected == 0:
+        time.sleep(0.1)
+    
+    nb_expected = agents[0].nb_agent_expected
+    print(f"Server expects {nb_expected} agents")
+    
+    # Create remaining agents
+    for i in range(1, nb_expected):
+        agents.append(Agent("localhost"))
+    
+    print(f"Created {len(agents)} agents | Map: {agents[0].w}x{agents[0].h}")
+    for a in agents:
+        print(f"  Agent {a.agent_id} at ({a.x}, {a.y})")
+    
+    # Start all agent threads
+    threads = []
+    for agent in agents:
+        t = Thread(target=agent_loop, args=(agent,), daemon=True)
+        threads.append(t)
+        t.start()
+    
+    # Wait for all agents to complete
+    try:
+        while not all(a.completed for a in agents):
+            time.sleep(1)
+            status = " | ".join(
+                "✓" if a.completed else ("🔑" if a.has_key else "...")
+                for a in agents
+            )
+            print(f"[{status}]")
+    except KeyboardInterrupt:
+        print("Stopped")
+    
+    print("=== ALL DONE ===")
 
-    # Map Discovery Loop
-
-    search_map(agent1)
