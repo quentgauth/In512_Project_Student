@@ -21,6 +21,9 @@ class Game:
         self.agent_id = 0
         self.moves = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
         self.agent_paths = [None]*nb_agents
+        self.game_over = False
+        self.death_position = None
+        self.death_agent = None
         self.load_map(map_id)
         self.gui = GUI(self,cell_size=20)
         
@@ -39,8 +42,18 @@ class Game:
             self.boxes.append(Box(self.map_cfg[f"box_{i+1}"]["x"], self.map_cfg[f"box_{i+1}"]["y"]))
             self.agent_paths[i] = [(self.agents[i].x, self.agents[i].y)]
         
+        # Load walls
+        self.walls = []
+        wall_idx = 1
+        while f"wall_{wall_idx}" in self.map_cfg:
+            wall_cfg = self.map_cfg[f"wall_{wall_idx}"]
+            self.walls.append(Wall(wall_cfg["x"], wall_cfg["y"], wall_cfg.get("rotation", 0)))
+            wall_idx += 1
+        
         self.map_w, self.map_h = self.map_cfg["width"], self.map_cfg["height"]
         self.map_real = np.zeros(shape=(self.map_h, self.map_w))
+        
+        # First, add items (keys and boxes) to establish their zones
         items = []
         items.extend(self.keys)
         items.extend(self.boxes)
@@ -52,6 +65,26 @@ class Game:
                         self.add_val(item.x + dx, item.y + dy, item.neighbour_percent/(i+1))
                     else:
                         self.add_val(item.x, item.y, 1)
+        
+        # Store item zones to check wall placement
+        self.item_zones = set()
+        for item in items:
+            for sub_list in offsets:
+                for dx, dy in sub_list:
+                    self.item_zones.add((item.x + dx, item.y + dy))
+        
+        # Add walls only on cells that are not in item zones
+        for wall in self.walls:
+            # Add warning zone (0.35) only on empty cells (not in item zones)
+            for wx, wy in wall.get_warning_zone():
+                if 0 <= wx < self.map_w and 0 <= wy < self.map_h:
+                    if (wx, wy) not in self.item_zones and self.map_real[wy, wx] == 0:
+                        self.map_real[wy, wx] = WALL_WARNING_PERCENTAGE
+            # Add wall cells (1.0) only on empty cells (not in item zones)
+            for wx, wy in wall.cells:
+                if 0 <= wx < self.map_w and 0 <= wy < self.map_h:
+                    if (wx, wy) not in self.item_zones:
+                        self.map_real[wy, wx] = WALL_VALUE
 
     
     def add_val(self, x, y, val):
@@ -77,15 +110,46 @@ class Game:
 
     def handle_move(self, msg, agent_id):
         """ Make sure the desired move is allowed and update the agent's position """
+        if self.game_over:  # Don't process moves if game is over
+            return {"sender": GAME_ID, "header": MOVE, "x": self.agents[agent_id].x, "y": self.agents[agent_id].y, "cell_val": self.map_real[self.agents[agent_id].y, self.agents[agent_id].x], "game_over": True}
+        
         if msg["direction"] in range(9):
             dx, dy = self.moves[msg["direction"]]
             x, y = self.agents[agent_id].x, self.agents[agent_id].y
-            if 0 <= x + dx < self.map_w and 0 <= y + dy < self.map_h:  
-                self.agents[agent_id].x, self.agents[agent_id].y = x + dx, y + dy
-                if (self.agents[agent_id].x, self.agents[agent_id].y) not in self.agent_paths[agent_id]:    #add the current agent pose in the path only if it is the first time it goes to its current cell
-                    self.agent_paths[agent_id].append((self.agents[agent_id].x, self.agents[agent_id].y))
-                    #sleep(0.5)
-        return {"sender": GAME_ID, "header": MOVE, "x": self.agents[agent_id].x, "y": self.agents[agent_id].y, "cell_val": self.map_real[self.agents[agent_id].y, self.agents[agent_id].x]}
+            new_x, new_y = x + dx, y + dy
+            
+            if 0 <= new_x < self.map_w and 0 <= new_y < self.map_h:
+                # Check if target cell is a wall (not an item)
+                target_val = self.map_real[new_y, new_x]
+                is_wall = target_val == WALL_VALUE and self._is_wall_cell(new_x, new_y)
+                
+                if is_wall:
+                    # GAME OVER! Agent hit a wall
+                    self.game_over = True
+                    self.death_position = (new_x, new_y)
+                    self.death_agent = agent_id
+                    print(f"💀 GAME OVER! Agent {agent_id} hit a wall at ({new_x}, {new_y})")
+                    return {"sender": GAME_ID, "header": MOVE, "x": x, "y": y, "cell_val": self.map_real[y, x], "game_over": True, "death_pos": (new_x, new_y)}
+                else:
+                    self.agents[agent_id].x, self.agents[agent_id].y = new_x, new_y
+                    if (self.agents[agent_id].x, self.agents[agent_id].y) not in self.agent_paths[agent_id]:
+                        self.agent_paths[agent_id].append((self.agents[agent_id].x, self.agents[agent_id].y))
+        return {"sender": GAME_ID, "header": MOVE, "x": self.agents[agent_id].x, "y": self.agents[agent_id].y, "cell_val": self.map_real[self.agents[agent_id].y, self.agents[agent_id].x], "game_over": False}
+    
+    def _is_wall_cell(self, x, y):
+        """Check if position (x,y) is a wall cell (not an item)"""
+        # Check if it's a key or box position
+        for key in self.keys:
+            if key.x == x and key.y == y:
+                return False
+        for box in self.boxes:
+            if box.x == x and box.y == y:
+                return False
+        # Check if it's in any wall's cells
+        for wall in self.walls:
+            if (x, y) in wall.cells:
+                return True
+        return False
 
 
 
@@ -128,3 +192,68 @@ class Key(Item):
 class Box(Item):
     def __init__(self, x, y):
         Item.__init__(self, x, y, BOX_NEIGHBOUR_PERCENTAGE, "box")
+
+
+class Wall:
+    """
+    L-shaped wall (5 cells in a 3x3 grid) with a warning zone around it.
+    Rotation determines the orientation of the L:
+    - 0: ███    (top row + left column)
+         █
+         █
+    - 1: ███    (top row + right column)
+           █
+           █
+    - 2: █      (bottom row + left column)
+         █
+         ███
+    - 3:   █    (bottom row + right column)
+           █
+         ███
+    """
+    def __init__(self, x, y, rotation=0):
+        self.x, self.y = x, y
+        self.rotation = rotation
+        self.cells = self._get_cells()  # The 5 wall cells
+    
+    def _get_cells(self):
+        """Get the 5 cell positions of the L-shape based on rotation"""
+        # Each L-shape is made of 5 cells in a 3x3 grid
+        if self.rotation == 0:  # Top row + left column
+            return [
+                (self.x, self.y), (self.x + 1, self.y), (self.x + 2, self.y),  # top row
+                (self.x, self.y + 1), (self.x, self.y + 2)  # left column
+            ]
+        elif self.rotation == 1:  # Top row + right column
+            return [
+                (self.x, self.y), (self.x + 1, self.y), (self.x + 2, self.y),  # top row
+                (self.x + 2, self.y + 1), (self.x + 2, self.y + 2)  # right column
+            ]
+        elif self.rotation == 2:  # Bottom row + left column
+            return [
+                (self.x, self.y), (self.x, self.y + 1),  # left column
+                (self.x, self.y + 2), (self.x + 1, self.y + 2), (self.x + 2, self.y + 2)  # bottom row
+            ]
+        elif self.rotation == 3:  # Bottom row + right column
+            return [
+                (self.x + 2, self.y), (self.x + 2, self.y + 1),  # right column
+                (self.x, self.y + 2), (self.x + 1, self.y + 2), (self.x + 2, self.y + 2)  # bottom row
+            ]
+        return []
+    
+    def get_warning_zone(self):
+        """Get all cells around the L-shape for warning zone"""
+        warning = set()
+        for cx, cy in self.cells:
+            # Add all 8 neighbors
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0:
+                        continue
+                    neighbor = (cx + dx, cy + dy)
+                    if neighbor not in self.cells:
+                        warning.add(neighbor)
+        return warning
+    
+    def __repr__(self):
+        return f"Wall at ({self.x}, {self.y}) rotation={self.rotation}"
