@@ -1,6 +1,6 @@
 # IN512 Project - Multi-Agent Key-Box Collection
 
-## 👥 Team
+## Team
 
 | Last Name | First Name |
 |-----------|------------|
@@ -11,7 +11,7 @@
 
 ---
 
-## 📋 Project Description
+## Project Description
 
 Autonomous multi-agent system where each agent must:
 1. **Find its key** (identified by its color)
@@ -22,7 +22,7 @@ Agents communicate through a broadcast system to share discovered item positions
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 ```bash
@@ -50,7 +50,7 @@ python3 scripts/main.py
 
 ---
 
-## 🧠 Implementation Architecture
+## Implementation Architecture
 
 ### 1. Search Strategy (Sweep)
 
@@ -135,27 +135,27 @@ Initial position → Blocked direction
 
 ---
 
-## 📁 File Structure
+## File Structure
 
 ```
 scripts/
-├── startup.py      # 🚀 Launch script (server + agents)
-├── main.py         # 🤖 Agent logic (our implementation)
-├── server.py       # 🖥️ Game server
-├── game.py         # 🎮 Game logic (walls, items, collision)
-├── gui.py          # 📺 Pygame graphical interface
-├── agent.py        # 📡 Agent network communication
-├── network.py      # 🔌 Network layer
-└── my_constants.py # 📋 Constants (directions, types, etc.)
+├── startup.py      # Launch script (server + agents)
+├── main.py         # Agent logic (our implementation)
+├── server.py       # Game server
+├── game.py         # Game logic (walls, items, collision)
+├── gui.py          # Pygame graphical interface
+├── agent.py        # Agent network communication
+├── network.py      # Network layer
+└── my_constants.py # Constants (directions, types, etc.)
 
 resources/
-├── config.json     # ⚙️ Map configuration (item/wall positions)
-└── img/            # 🖼️ Graphical assets
+├── config.json     # Map configuration (item/wall positions)
+└── img/            # Graphical assets
 ```
 
 ---
 
-## 🗺️ Map Configuration
+## Map Configuration
 
 Each map defines:
 - Agent spawn positions
@@ -179,18 +179,18 @@ L-wall rotations:
 
 ---
 
-## 📊 Display
+## Display
 
 The Pygame window shows:
 - **Header**: Step counter for each agent (colored)
 - **Grid**: 35x30 cells
 - **Colored traces**: Path traveled by each agent
 - **Walls**: Gray zones (dark = wall, light = danger zone)
-- **Items**: Keys 🔑 and boxes 📦 with colored borders
+- **Items**: Keys  and boxes  with colored borders
 
 ---
 
-## ⚙️ Key Parameters
+## Key Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
@@ -201,7 +201,7 @@ The Pygame window shows:
 
 ---
 
-## 🎯 Implemented Optimizations
+## Implemented Optimizations
 
 1. **Inter-agent communication**: Immediate discovery sharing
 2. **Direct access**: Once an item is located, agent goes directly
@@ -211,6 +211,6 @@ The Pygame window shows:
 
 ---
 
-## 📝 License
+## License
 
 Apache License 2.0
