@@ -76,8 +76,8 @@ class Server:
                 conn.close()
                 self.nb_disconnected += 1
                 if self.nb_disconnected >= self.nb_agents:
-                    self.game.gui.running = False
-                    sys.exit()
+                    print("Game finished! Close the window manually to exit.")
+                    # La fenêtre reste ouverte jusqu'à ce que l'utilisateur la ferme
 
 
     def send_to_all(self, sender, msg):
